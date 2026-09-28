@@ -1,0 +1,417 @@
+import { Product, Transaction, TransactionType, Warehouse } from './types'
+
+// ---------------------------------------------------------------------------
+// Why the store lives on `globalThis`
+// ---------------------------------------------------------------------------
+// This app intentionally has no database — everything lives in memory. That's
+// fine for a demo, but Next.js can re-evaluate this module more than once
+// during a single `npm run dev` session (route handlers and pages compile as
+// separate chunks, and the dev server's on-demand compiler can reload a file
+// you haven't hit in a while, or after any edit anywhere in the project).
+// A plain `export const products = [...]` gets reset back to the seed values
+// every time that happens — which is exactly the "I stocked something in and
+// it disappeared" symptom.
+//
+// Stashing the mutable store on `globalThis` means there's only ever ONE
+// store object for the whole server process, no matter how many times this
+// module file gets re-imported, so mutations made by one request are still
+// there on the next one.
+//
+// Heads up: this only fixes it for a single, long-running Node process
+// (i.e. local `npm run dev`, or `npm start`). If this ever gets deployed to
+// a serverless platform (Vercel, etc.), each request can be served by a
+// fresh, isolated function instance with its own memory, so state can still
+// appear to "reset" there. Fixing that for real needs a persistent store
+// (a database, KV store, etc.) instead of an in-memory array — out of scope
+// for this exercise, but worth knowing before you rely on it in prod.
+type Store = {
+  warehouses: Warehouse[]
+  products: Product[]
+  transactions: Transaction[]
+  nextTransactionSeq: number
+  nextProductSeq: number
+}
+
+function createInitialStore(): Store {
+  const warehouses: Warehouse[] = [
+    {
+      id: 'wh-north',
+      name: 'North Distribution Center',
+      location: 'Elkridge, MD',
+    },
+    { id: 'wh-south', name: 'South Fulfillment Hub', location: 'Waco, TX' },
+  ]
+
+  const products: Product[] = [
+    {
+      id: 'p-001',
+      name: 'Corrugated Shipping Box (M)',
+      category: 'Packaging',
+      warehouseId: 'wh-north',
+      currentStock: 420,
+      reorderThreshold: 100,
+    },
+    {
+      id: 'p-002',
+      name: 'Corrugated Shipping Box (M)',
+      category: 'Packaging',
+      warehouseId: 'wh-south',
+      currentStock: 38,
+      reorderThreshold: 100,
+    },
+    {
+      id: 'p-003',
+      name: 'Stretch Wrap Film 18in',
+      category: 'Packaging',
+      warehouseId: 'wh-north',
+      currentStock: 64,
+      reorderThreshold: 60,
+    },
+    {
+      id: 'p-004',
+      name: 'Stretch Wrap Film 18in',
+      category: 'Packaging',
+      warehouseId: 'wh-south',
+      currentStock: 15,
+      reorderThreshold: 60,
+    },
+    {
+      id: 'p-005',
+      name: 'Packing Tape, Clear 48mm',
+      category: 'Packaging',
+      warehouseId: 'wh-north',
+      currentStock: 210,
+      reorderThreshold: 80,
+    },
+    {
+      id: 'p-006',
+      name: 'Heavy-Duty Pallet Jack',
+      category: 'Equipment',
+      warehouseId: 'wh-south',
+      currentStock: 6,
+      reorderThreshold: 5,
+    },
+    {
+      id: 'p-007',
+      name: 'Heavy-Duty Pallet Jack',
+      category: 'Equipment',
+      warehouseId: 'wh-north',
+      currentStock: 3,
+      reorderThreshold: 5,
+    },
+    {
+      id: 'p-008',
+      name: 'Steel Shelving Unit 5-Tier',
+      category: 'Equipment',
+      warehouseId: 'wh-north',
+      currentStock: 12,
+      reorderThreshold: 4,
+    },
+    {
+      id: 'p-009',
+      name: 'Forklift Safety Vest',
+      category: 'Safety',
+      warehouseId: 'wh-south',
+      currentStock: 25,
+      reorderThreshold: 20,
+    },
+    {
+      id: 'p-010',
+      name: 'Forklift Safety Vest',
+      category: 'Safety',
+      warehouseId: 'wh-north',
+      currentStock: 20,
+      reorderThreshold: 20,
+    },
+    {
+      id: 'p-011',
+      name: 'Nitrile Gloves (Box of 100)',
+      category: 'Safety',
+      warehouseId: 'wh-north',
+      currentStock: 140,
+      reorderThreshold: 50,
+    },
+    {
+      id: 'p-012',
+      name: 'Nitrile Gloves (Box of 100)',
+      category: 'Safety',
+      warehouseId: 'wh-south',
+      currentStock: 9,
+      reorderThreshold: 50,
+    },
+    {
+      id: 'p-013',
+      name: 'First Aid Kit, Wall-Mount',
+      category: 'Safety',
+      warehouseId: 'wh-south',
+      currentStock: 8,
+      reorderThreshold: 8,
+    },
+    {
+      id: 'p-014',
+      name: 'Handheld Barcode Scanner',
+      category: 'Electronics',
+      warehouseId: 'wh-north',
+      currentStock: 18,
+      reorderThreshold: 6,
+    },
+    {
+      id: 'p-015',
+      name: 'Handheld Barcode Scanner',
+      category: 'Electronics',
+      warehouseId: 'wh-south',
+      currentStock: 4,
+      reorderThreshold: 6,
+    },
+    {
+      id: 'p-016',
+      name: 'Label Printer, Thermal',
+      category: 'Electronics',
+      warehouseId: 'wh-north',
+      currentStock: 9,
+      reorderThreshold: 3,
+    },
+    {
+      id: 'p-017',
+      name: 'Warehouse Radio, Two-Way',
+      category: 'Electronics',
+      warehouseId: 'wh-south',
+      currentStock: 11,
+      reorderThreshold: 10,
+    },
+    {
+      id: 'p-018',
+      name: 'Wooden Pallet, Standard',
+      category: 'Materials',
+      warehouseId: 'wh-north',
+      currentStock: 320,
+      reorderThreshold: 150,
+    },
+    {
+      id: 'p-019',
+      name: 'Wooden Pallet, Standard',
+      category: 'Materials',
+      warehouseId: 'wh-south',
+      currentStock: 132,
+      reorderThreshold: 150,
+    },
+    {
+      id: 'p-020',
+      name: 'Cardboard Dunnage Sheets',
+      category: 'Materials',
+      warehouseId: 'wh-south',
+      currentStock: 55,
+      reorderThreshold: 55,
+    },
+  ]
+
+  // A few sample transactions so the History page isn't empty on first load.
+  const transactions: Transaction[] = [
+    {
+      id: 't-001',
+      productId: 'p-002',
+      productName: 'Corrugated Shipping Box (M)',
+      warehouseId: 'wh-south',
+      warehouseName: 'South Fulfillment Hub',
+      type: 'OUT',
+      quantity: 62,
+      timestamp: '2026-09-15T14:32:00Z',
+    },
+    {
+      id: 't-002',
+      productId: 'p-018',
+      productName: 'Wooden Pallet, Standard',
+      warehouseId: 'wh-north',
+      warehouseName: 'North Distribution Center',
+      type: 'IN',
+      quantity: 100,
+      timestamp: '2026-09-16T09:05:00Z',
+    },
+    {
+      id: 't-003',
+      productId: 'p-011',
+      productName: 'Nitrile Gloves (Box of 100)',
+      warehouseId: 'wh-north',
+      warehouseName: 'North Distribution Center',
+      type: 'TRANSFER_OUT',
+      quantity: 40,
+      timestamp: '2026-09-17T11:20:00Z',
+      linkedTransactionId: 't-004',
+    },
+    {
+      id: 't-004',
+      productId: 'p-012',
+      productName: 'Nitrile Gloves (Box of 100)',
+      warehouseId: 'wh-south',
+      warehouseName: 'South Fulfillment Hub',
+      type: 'TRANSFER_IN',
+      quantity: 40,
+      timestamp: '2026-09-17T11:20:00Z',
+      linkedTransactionId: 't-003',
+    },
+  ]
+
+  return {
+    warehouses,
+    products,
+    transactions,
+    nextTransactionSeq: transactions.length + 1,
+    nextProductSeq: products.length + 1,
+  }
+}
+
+const globalForStore = globalThis as unknown as { __stockliteStore?: Store }
+
+const store =
+  globalForStore.__stockliteStore ??
+  (globalForStore.__stockliteStore = createInitialStore())
+
+export const warehouses = store.warehouses
+export const products = store.products
+export const transactions = store.transactions
+
+function warehouseName(id: string) {
+  return warehouses.find((w) => w.id === id)?.name ?? id
+}
+
+export function findProduct(id: string) {
+  return products.find((p) => p.id === id)
+}
+
+export function recordTransaction(input: {
+  productId: string
+  productName: string
+  warehouseId: string
+  type: TransactionType
+  quantity: number
+  linkedTransactionId?: string
+}): Transaction {
+  const tx: Transaction = {
+    id: `t-${String(store.nextTransactionSeq++).padStart(3, '0')}`,
+    productId: input.productId,
+    productName: input.productName,
+    warehouseId: input.warehouseId,
+    warehouseName: warehouseName(input.warehouseId),
+    type: input.type,
+    quantity: input.quantity,
+    timestamp: new Date().toISOString(),
+    linkedTransactionId: input.linkedTransactionId,
+  }
+  transactions.push(tx)
+  return tx
+}
+
+// -------------------------------------------------------------------------
+// TASK 2 — Stock In / Stock Out
+// -------------------------------------------------------------------------
+// 1. Validate quantity is a positive, finite WHOLE number (no decimals)
+// 2. Block OUT movements greater than currentStock (prevents negative stock)
+// 3. Apply the movement to the correct product
+// 4. Call recordTransaction(...) so it appears in Transaction History
+export function applyStockMovement(
+  productId: string,
+  quantity: number,
+  direction: 'IN' | 'OUT',
+): Product {
+  const product = findProduct(productId)
+  if (!product) throw new Error('Product not found')
+
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error('Quantity must be a whole number greater than 0.')
+  }
+
+  if (direction === 'OUT' && quantity > product.currentStock) {
+    throw new Error(
+      `Cannot stock out ${quantity} units — only ${product.currentStock} in stock.`,
+    )
+  }
+
+  product.currentStock += direction === 'IN' ? quantity : -quantity
+
+  recordTransaction({
+    productId: product.id,
+    productName: product.name,
+    warehouseId: product.warehouseId,
+    type: direction,
+    quantity,
+  })
+
+  return product
+}
+
+// -------------------------------------------------------------------------
+// TASK 3 — Warehouse Transfer
+// -------------------------------------------------------------------------
+// 1. Validate source !== destination
+// 2. Validate quantity is a positive whole number and <= source.currentStock
+// 3. Deduct from source AND add to destination
+// 4. Create a destination product row if the product doesn't exist there yet
+// 5. Apply fully or not at all (no partial writes if validation fails —
+//    every check below runs BEFORE either warehouse is mutated)
+// 6. Record a linked TRANSFER_OUT / TRANSFER_IN pair via recordTransaction
+export function applyTransfer(
+  productId: string,
+  destWarehouseId: string,
+  quantity: number,
+): { source: Product; destination: Product } {
+  const source = findProduct(productId)
+  if (!source) throw new Error('Source product not found')
+
+  if (!warehouses.find((w) => w.id === destWarehouseId)) {
+    throw new Error('Destination warehouse not found')
+  }
+  if (destWarehouseId === source.warehouseId) {
+    throw new Error('Source and destination warehouses must be different.')
+  }
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error('Quantity must be a whole number greater than 0.')
+  }
+  if (quantity > source.currentStock) {
+    throw new Error(
+      `Cannot transfer ${quantity} units — only ${source.currentStock} in stock at the source warehouse.`,
+    )
+  }
+
+  // All validation above has passed, so from here on nothing can fail —
+  // it's safe to commit both sides of the transfer. Find an existing row
+  // for this same product at the destination warehouse, or create one.
+  let destination = products.find(
+    (p) => p.name === source.name && p.warehouseId === destWarehouseId,
+  )
+
+  source.currentStock -= quantity
+
+  if (destination) {
+    destination.currentStock += quantity
+  } else {
+    destination = {
+      id: `p-${String(store.nextProductSeq++).padStart(3, '0')}`,
+      name: source.name,
+      category: source.category,
+      warehouseId: destWarehouseId,
+      currentStock: quantity,
+      reorderThreshold: source.reorderThreshold,
+    }
+    products.push(destination)
+  }
+
+  // Record the pair and cross-link them to each other.
+  const outTx = recordTransaction({
+    productId: source.id,
+    productName: source.name,
+    warehouseId: source.warehouseId,
+    type: 'TRANSFER_OUT',
+    quantity,
+  })
+  const inTx = recordTransaction({
+    productId: destination.id,
+    productName: destination.name,
+    warehouseId: destination.warehouseId,
+    type: 'TRANSFER_IN',
+    quantity,
+    linkedTransactionId: outTx.id,
+  })
+  outTx.linkedTransactionId = inTx.id
+
+  return { source, destination }
+}
